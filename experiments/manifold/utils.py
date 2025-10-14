@@ -149,6 +149,27 @@ def make_model(
     )
 
 
+def make_model_conditional(
+    key: Array,
+    features_latent: int,
+    features_cond: int,
+    hid_features: Sequence[int] = (256, 256, 256),
+    emb_features: int = 64,
+    normalize: bool = True,
+    **absorb,
+) -> ConditionalDenoiser:
+    return ConditionalDenoiser(
+        network=ConditionalTimeMLP(
+            features_cond=features_cond,
+            features_latent=features_latent,
+            hid_features=hid_features,
+            emb_features=emb_features,
+            normalize=normalize,
+            key=key,
+        ),
+        emb_features=emb_features,
+    )
+
 class TimeMLP(MLP):
     def __init__(self, features: int, emb_features: int = 64, **kwargs):
         super().__init__(features + emb_features, features, **kwargs)
@@ -160,3 +181,27 @@ class TimeMLP(MLP):
 
     def __call__(self, x: Array, t: Array, key: Array = None) -> Array:
         return super().__call__(self.cat(x, t))
+
+
+class ConditionalTimeMLP(MLP):
+    def __init__(self, features_latent: int, features_cond: int, emb_features: int = 64, **kwargs):
+        super().__init__(features_latent + emb_features + features_cond, features_latent, **kwargs)
+
+    @staticmethod
+    @partial(jnp.vectorize, signature='(m),(n),(k)->(p)')
+    def cat(x: Array, y: Array, z: Array) -> Array:
+        return jnp.concatenate((x, y, z))
+
+    def __call__(self, x: Array, t: Array, y_cond: Array, key: Array = None) -> Array:
+        """
+        Denoises x when the noise level is t conditioned on y which is (A, Ax + noise)
+        """
+        xty_concatenated = self.cat(x, t, y_cond)
+        return super().__call__(xty_concatenated)
+
+
+class MyDict:
+    def __init__(self, d):
+        self.d = d
+    def __getattr__(self, s):
+        return self.d[s]
