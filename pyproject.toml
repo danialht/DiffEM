@@ -1,25 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "priors"
+name = "diffem"
 version = "0.0.0"
+description = "Diffusion EM research code"
+readme = "README.md"
+requires-python = ">=3.9"
 
-[project.optional-dependencies]
-dev = ["ruff"]
+[project.scripts]
+diffem = "cli.main:app"
 
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-extend-select = ["I"]
-ignore = ["F403", "F405", "E731", "E741"]
-
-[tool.ruff.lint.isort]
-lines-between-types = 1
-no-sections = true
-relative-imports-order = "closest-to-furthest"
-
-[tool.ruff.format]
-preview = true
-quote-style = "preserve"
 
 [tool.setuptools]
-packages = ["priors"]
+packages = ["priors", "experiments"]

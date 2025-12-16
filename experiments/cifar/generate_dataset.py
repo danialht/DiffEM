@@ -269,7 +269,7 @@ if __name__ == '__main__':
     conditional = False
     dir_category = 'conditional' if conditional else 'unconditional'
     
-    indices = [31]
+    indices = [i for i in range(0, 32)]
     
     for i in indices:
         # Has to set the arguments
