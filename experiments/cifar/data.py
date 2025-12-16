@@ -1,25 +1,19 @@
 #!/usr/bin/env python
 
 from datasets import Array3D, Features, load_dataset
-from dawgz import after, job, schedule
+from pathlib import Path
 
 # isort: split
-from utils import *
+from .utils import *
 
-
-@job(cpus=4, ram='64GB', time='06:00:00')
-def download():
-    load_dataset('cifar10', cache_dir=PATH / 'hf')
-
-
-@after(download)
-@job(cpus=4, ram='64GB', time='06:00:00')
-def corrupt():
-    corruption = 75
+def corrupt(
+    cifar_dir_path: Path,
+    maskprob: int,
+    ) -> None:
 
     def transform(row):
         x = from_pil(row['img'])
-        A = np.random.uniform(size=(32, 32, 1)) > corruption / 100
+        A = np.random.uniform(size=(32, 32, 1)) > maskprob / 100
         y = np.random.normal(loc=A * x, scale=1e-3)
 
         return {'A': A, 'y': y}
@@ -29,7 +23,7 @@ def corrupt():
         'y': Array3D(shape=(32, 32, 3), dtype='float32'),
     }
 
-    dataset = load_dataset('cifar10', cache_dir=PATH / 'hf')
+    dataset = load_dataset('cifar10', cache_dir=cifar_dir_path / 'datasets/clean')
     dataset = dataset.map(
         transform,
         features=Features(types),
@@ -38,14 +32,9 @@ def corrupt():
         num_proc=4,
     )
 
-    dataset.save_to_disk(PATH / f'hf/cifar-mask-{corruption}')
+    save_path = cifar_dir_path / f'datasets/cifar-mask-{maskprob}'
+    
+    dataset.save_to_disk(save_path)
 
-
-if __name__ == '__main__':
-    schedule(
-        corrupt,
-        name='Data corruption',
-        backend='slurm',
-        export='ALL',
-        account='ariacpg',
-    )
+if __name__ == "__main__":
+    pass

@@ -2,6 +2,10 @@
 # Others #
 ##########
 
+# Hydra logs
+multirun/
+outputs/
+
 # DAWGZ
 .dawgz/
 
