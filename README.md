@@ -57,3 +57,27 @@ diffem_files/
     └── datasets_eval/        (Dataset in PNG Image format)
 ```
 
+## Training
+
+In order to train the conditional model you simply use the `train.py` script.
+
+```bash
+python train.py experiment=cifar ruin_name=test_run diffem_files_dir=<path/to/diffem_files>\
+                training.num_laps=20 experiment.corruption_level=90
+```
+
+In order to have a much more fine grained control over training you can use a more sophisticated command, not mentioning of the hyperparameters will automatically set it to default (specified in `conf` directory):
+
+```bash
+python train.py run_name=<run name> experiment=<experiment_name e.g. cifar, cleba>\
+                diffem_files_dir=<path/to/diffem_files> \
+                training.num_laps=<num EM laps> training.epochs=<num epochs>\
+                training.batch_size=<batch size> training.clip=<clip> training.ema_decay=<ema_decay>\
+                experiment.sampler.name=<sampler name> experiment.sampler.sde.a=<a> experiment.sampler.sde.b=<b>\
+                experiment.sampler.maxiter=<maxiter> experiment.sampler.discrete=<discrete>\
+                experiment.optimizer.name=<optimizer name> experiment.optimizer.lr_init=<initial lr> experiment.optimizer.lr_end=<ending lr> experiment.optimizer.lr_warmup=<warmup lr>\
+                experiment.optimizer.scheduler: constant experiment.optimizer.weight_decay: null\
+                experiment.model.hid_channels=<hid_channels> experiment.model.hid_blocks=<hid_blocks> \
+                experiment.model.kernel_size=<kernel_size> experiment.model.emb_features=<emb_features> \
+                experiment.model.heads=<heads> experiment.model.dropout=<dropout>
+```
