@@ -88,6 +88,54 @@ class DDPM(nn.Module):
         return xt - tau * (xt - self.model(xt, sigma_t)) + sigma_s * jnp.sqrt(tau) * eps
 
 
+class ConditionalDDPM(nn.Module):
+    r"""DDPM sampler for the reverse SDE.
+
+    .. math:: x_s = x_t - \tau (x_t - f(x_t)) + \sigma_s \sqrt{\tau} \epsilon
+
+    where :math:`\tau = 1 - \frac{\sigma_s^2}{\sigma_t^2}`.
+
+    Arguments:
+        model: A denoiser model :math:`f(x_t, y) \approx E[x | x_t, y]`.
+        sde: The forward SDE.
+    """
+
+    def __init__(self, model: nn.Module, sde: VESDE = None, **kwargs):
+        super().__init__()
+
+        self.model = model
+
+        if sde is None:
+            self.sde = VESDE()
+        else:
+            self.sde = sde
+
+    @inox.jit
+    def __call__(self, xt: Array, t: Array, y: Array, steps: int = 64, key: Array = None) -> Array:
+        if t is None:
+            t = 1.0
+        dt = jnp.asarray(t / steps)
+        time = jnp.linspace(t, dt, steps)
+        keys = jax.random.split(key, steps)
+
+        def f(xt, t_key):
+            t, key = t_key
+            return self.step(xt, t, y, t - dt, key), None
+
+
+        x0, _ = jax.lax.scan(f, xt, (time, keys))
+
+        return self.model(x0, self.sde.sigma(0.0), y, key = key)
+
+    @inox.jit
+    def step(self, xt: Array, t: Array, y: Array, s: Array, key: Array) -> Array:
+        sigma_s, sigma_t = self.sde.sigma(s), self.sde.sigma(t)
+        tau = 1 - (sigma_s / sigma_t) ** 2
+        eps = jax.random.normal(key, xt.shape)
+
+        return xt - tau * (xt - self.model(xt, sigma_t, y, key = key)) + sigma_s * jnp.sqrt(tau) * eps
+
+
 class DDIM(DDPM):
     r"""DDIM sampler for the reverse SDE.
 
@@ -103,6 +151,23 @@ class DDIM(DDPM):
         sigma_s, sigma_t = self.sde.sigma(s), self.sde.sigma(t)
 
         return xt - (1 - sigma_s / sigma_t) * (xt - self.model(xt, sigma_t))
+
+
+class ConditionalDDIM(ConditionalDDPM):
+    r"""DDIM sampler for the reverse SDE.
+
+    .. math:: x_s = x_t - (1 - \frac{\sigma_s}{\sigma_t}) (x_t - f(x_t))
+
+    Arguments:
+        model: A denoiser model :math:`f(x_t) \approx E[x | x_t]`.
+        sde: The forward SDE.
+    """
+
+    @inox.jit
+    def step(self, xt: Array, t: Array, y_cond: Array, s: Array, key: Array = None) -> Array:
+        sigma_s, sigma_t = self.sde.sigma(s), self.sde.sigma(t)
+
+        return xt - (1 - sigma_s / sigma_t) * (xt - self.model(xt, sigma_t, y_cond))
 
 
 class PredictorCorrector(DDPM):
@@ -141,6 +206,44 @@ class PredictorCorrector(DDPM):
         eps = jax.random.normal(key, xt.shape)
 
         return xt - self.tau * (xt - self.model(xt, sigma_t)) + sigma_t * jnp.sqrt(2 * self.tau) * eps
+
+
+class ConditionalPredictorCorrector(ConditionalDDPM):
+    r"""Predictor-Corrector sampler for the reverse SDE.
+
+    Arguments:
+        model: A denoiser model :math:`f(x_t) \approx E[x | x(t)]`.
+        corrections: The number of Langevin Monte Carlo (LMC) corrections.
+        tau: The LMC step size.
+    """
+
+    def __init__(self, model: nn.Module, corrections: int = 1, tau: Array = 1e-1, **kwargs):
+        super().__init__(model, **kwargs)
+
+        self.corrections = corrections
+        self.tau = jnp.asarray(tau)
+
+    @inox.jit
+    def step(self, xt: Array, t: Array, y: Array, s: Array, key: Array) -> Array:
+        xs = self.predict(xt, t, y, s)
+
+        for key in jax.random.split(key, self.corrections):
+            xs = self.correct(xs, s, y, key)
+
+        return xs
+
+    @inox.jit
+    def predict(self, xt: Array, t: Array, y: Array, s: Array) -> Array:
+        sigma_s, sigma_t = self.sde.sigma(s), self.sde.sigma(t)
+
+        return xt - (1 - sigma_s / sigma_t) * (xt - self.model(xt, sigma_t, y))
+
+    @inox.jit
+    def correct(self, xt: Array, t: Array, y:Array, key: Array) -> Array:
+        sigma_t = self.sde.sigma(t)
+        eps = jax.random.normal(key, xt.shape)
+
+        return xt - self.tau * (xt - self.model(xt, sigma_t, y)) + sigma_t * jnp.sqrt(2 * self.tau) * eps
 
 
 class PosEmbedding(nn.Module):
@@ -209,6 +312,42 @@ class Denoiser(nn.Module):
         return c_skip * xt + c_out * self.net(c_in * xt, self.emb(c_noise), key)
 
 
+class ConditionalDenoiser(nn.Module):
+    r"""Denoiser model with EDM-style preconditioning.
+
+    .. math:: f(x_t) \approx E[x | x_t]
+
+    References:
+        | Elucidating the Design Space of Diffusion-Based Generative Models (Karras et al., 2022)
+        | https://arxiv.org/abs/2206.00364
+
+    Arguments:
+        network: A noise conditional network.
+    """
+
+    def __init__(self, network: nn.Module, emb_features: int = 64):
+        self.net = network
+        self.emb = PosEmbedding(emb_features)
+
+    @inox.jit
+    def __call__(self, xt: Array, sigma_t: Array, y: Array, key: Array = None) -> Array:
+        r"""
+        Arguments:
+            xt: The noisy tensor, with shape :math:`(*, D)`.
+            y: The corrupted version of x0, ( A(x_0 + noise) ) the shape is (*, D) where D is the number of channels?
+            sigma_t: The noise std, with shape :math:`(*)`.
+            key: A PRNG key.
+        """
+
+        c_skip = 1 / (sigma_t**2 + 1)
+        c_out = sigma_t / jnp.sqrt(sigma_t**2 + 1)
+        c_in = 1 / jnp.sqrt(sigma_t**2 + 1)
+        c_noise = jnp.log(sigma_t)
+
+        c_skip, c_out, c_in = c_skip[..., None], c_out[..., None], c_in[..., None]
+        return c_skip * xt + c_out * self.net(c_in * xt, self.emb(c_noise), y, key)
+
+
 class DenoiserLoss(nn.Module):
     r"""Loss for a denoiser model.
 
@@ -251,6 +390,51 @@ class DenoiserLoss(nn.Module):
 
         return jnp.mean(lmbda_t * jnp.mean(error**2, axis=-1))
 
+class ConditionalDenoiserLoss(nn.Module):
+    r"""Loss for a denoiser model.
+
+    .. math:: \lambda_t || A f(x_t) - y ||^2
+
+    Arguments:
+        sde: The forward SDE.
+    """
+
+    def __init__(self, sde: VESDE = None):
+        if sde is None:
+            self.sde = VESDE()
+        else:
+            self.sde = sde
+
+    @inox.jit
+    def __call__(
+        self,
+        model: ConditionalDenoiser,
+        x0,
+        z,
+        t,
+        y_cond,
+        key: Array = None,
+    ) -> Array:
+        r"""
+        Arguments:
+            x: x
+            z: the random vectors from normal distribution
+            t: the times
+            y: corrupted x0s
+            corruption_matrix: corruption matrix ~ P(A)
+        """
+        sigma_t = self.sde.sigma(t)
+        lmbda_t = 1 / sigma_t**2 + 1
+
+        xt = self.sde(x0, z, t)
+        # we can give the corruption matrix as well? should we?
+        ft = model(xt, sigma_t, y_cond, key)
+
+        error = ft - x0
+
+        # what about norm 1, they said some stuff in the pallette class
+        return jnp.mean(lmbda_t * jnp.mean(error**2, axis=-1))
+
 
 class GaussianDenoiser(nn.Module):
     r"""Denoiser model for a Gaussian random variable.
@@ -278,6 +462,20 @@ class GaussianDenoiser(nn.Module):
         cov_t = sigma_t[..., None] ** 2
 
         return xt - cov_t * (self.cov_x + cov_t).solve(xt - self.mu_x)
+
+class ConditionalGaussianDenoiser(GaussianDenoiser):
+    
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+
+    @inox.jit
+    def __call__(self, xt: Array, sigma_t: Array, y_cond: Array, key: Array = None) -> Array:
+        # TODO: y_cond
+        return super().__call__(xt = xt, sigma_t =  sigma_t, key = key)
 
 
 class PosteriorDenoiser(nn.Module):
@@ -331,7 +529,7 @@ class PosteriorDenoiser(nn.Module):
         self.verbose = verbose
 
     @inox.jit
-    def __call__(self, xt: Array, sigma_t: Array, key: Array = None) -> Array:
+    def __call__(self, xt: Array, sigma_t: Array, key: Array|None = None) -> Array:
         cov_t = sigma_t[..., None] ** 2
 
         x, vjp = jax.vjp(lambda xt: self.model(xt, sigma_t, key), xt)
@@ -358,3 +556,32 @@ class PosteriorDenoiser(nn.Module):
         (score,) = vjp(At(v))
 
         return x + cov_t * score
+
+
+
+class ConditionalPosteriorDenoiser(PosteriorDenoiser):
+    r"""Posterior denoiser model for a Gaussian observation.
+
+    .. math:: p(y | x) = N(y | Ax, \Sigma_y)
+
+    Arguments:
+        model: A denoiser model :math:`f(x_t) \approx E[x | x_t]`.
+        A: The forward model :math:`A`.
+        y: An observation.
+        cov_y: The observation covariance :math:`\Sigma_y`.
+        cov_x: The hidden covariance :math:`\Sigma_x`.
+    """
+
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        return super().__init__(*args, **kwargs)
+
+
+    @inox.jit
+    def __call__(self, xt: Array, sigma_t: Array, y: Array, key: Array = None) -> Array:
+        return super().__call__(xt, sigma_t, key)
+        
+

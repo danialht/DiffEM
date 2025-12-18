@@ -1,0 +1,19 @@
+# conf/train.yaml
+defaults:
+  - _self_
+  - experiment: cifar
+
+diffem_files_dir: ???
+
+# Remove model: null, sampler: null, and optimizer: null from here
+# They will be inherited from the dataset config automatically.
+
+run_name: null
+
+training:
+  last_lap: -1
+  num_laps: 0
+  epochs: 256
+  batch_size: 256
+  clip: 1.0
+  ema_decay: 0.9999

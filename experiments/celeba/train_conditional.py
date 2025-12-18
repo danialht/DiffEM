@@ -12,7 +12,7 @@ import wandb
 
 import re
 
-from utils import *
+from .utils import *
 from jax.scipy.signal import convolve2d
 
 CONFIG = {
@@ -160,7 +160,7 @@ def blur_initialization(row: dict, kernel):
     x -= 2
     return {'x': x}
 
-def train_conditional(lap, runid):
+def train(lap, runid):
     run = wandb.init(
             project='priors-celeba-mask-conditional',
             id=runid,
@@ -392,4 +392,4 @@ if __name__ == "__main__":
     runid = wandb.util.generate_id()
 
     for lap in range(start_lap, 64):
-        train_conditional(lap, runid)
+        train(lap, runid)

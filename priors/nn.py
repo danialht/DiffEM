@@ -79,7 +79,7 @@ class ResBlock(nn.Module):
         self,
         channels: int,
         emb_features: int,
-        dropout: float = None,
+        dropout: float|None = None,
         **kwargs,
     ):
         self.modulation = Modulation(channels, emb_features)
@@ -135,14 +135,20 @@ class UNet(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
+        num_returned_channels: int = None,
         hid_channels: Sequence[int] = (64, 128, 256),
         hid_blocks: Sequence[int] = (3, 3, 3),
         kernel_size: Sequence[int] = (3, 3),
         emb_features: int = 64,
         heads: Dict[int, int] = {},
-        dropout: float = None,
+        dropout: float|None = None,
         key: Array = None,
     ):
+        if num_returned_channels is None:
+            self.num_returned_channels = out_channels
+        else:
+            self.num_returned_channels = num_returned_channels
+        
         if key is None:
             key = get_rng().split()
 
@@ -239,5 +245,6 @@ class UNet(nn.Module):
                         x = block(x, t)
                     else:
                         x = block(x)
-
+            
+            
             return x
