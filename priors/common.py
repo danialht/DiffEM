@@ -112,7 +112,6 @@ def fit_moments(
             key=rng.split(),
             **kwargs,
         )
-
         # Maximization
         mu_x, cov_x = ppca(x, rank=rank, key=rng.split())
 
@@ -136,7 +135,6 @@ def sample_any(
     **kwargs,
 ) -> Array:
     r"""Samples from :math:`q(x)` or :math:`q(x | A, y)`."""
-
     mu_x = getattr(model, 'mu_x', None)
     cov_x = getattr(model, 'cov_x', None)
 
@@ -173,5 +171,65 @@ def sample_any(
         x1 = sampler.sde(mu_x, z, 1.0)
 
     x0 = sampler(x1, steps=steps, key=key)
+
+    return x0
+
+
+def sample_any_conditional(
+    model: nn.Module,
+    shape: Sequence[int],
+    shard: bool = False,
+    y_cond: Array = None,
+    cov_y: Union[Array, DPLR] = None,
+    key: Array = None,
+    sampler: str = 'ddpm',
+    steps: int = 64,
+    rtol: float = 1e-3,
+    maxiter: int = 1,
+    method: str = 'cg',
+    verbose: bool = False,
+    **kwargs,
+) -> Array:
+    r"""Samples from :math:`q(x)` or :math:`q(x | A, y)`."""
+
+    # mu_x = getattr(model, 'mu_x', None)
+    # cov_x = getattr(model, 'cov_x', None)
+
+    # if A is None or y is None:
+    #     pass
+    # else:
+    #     # TODO: Conditional
+    #     # raise Exception("Conditional version not implemented.")
+    #     model = PosteriorDenoiser(
+    #         model=model,
+    #         A=A,
+    #         y=y,
+    #         cov_y=cov_y,
+    #         cov_x=cov_x,
+    #         rtol=rtol,
+    #         maxiter=maxiter,
+    #         method=method,
+    #         verbose=verbose,
+    #     )
+
+    if sampler == 'ddpm':
+        sampler = ConditionalDDPM(model, **kwargs)
+    elif sampler == 'ddim':
+        sampler = ConditionalDDIM(model, **kwargs)
+    elif sampler == 'pc':
+        sampler = ConditionalPredictorCorrector(model, **kwargs)
+
+    z = jax.random.normal(key, shape)
+
+    if shard:
+        z = distribute(z) # TODO
+
+
+    # if mu_x is None:
+    x1 = sampler.sde(0.0, z, 1.0)
+    # else:
+    #     x1 = sampler.sde(mu_x, z, 1.0)
+        
+    x0 = sampler(x1, t = 1.0, y = y_cond , steps=steps, key=key)
 
     return x0
