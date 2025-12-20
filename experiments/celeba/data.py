@@ -36,6 +36,7 @@ def corrupt_dataset(
     save_path: str,
     maskprob: int,
     seed: int = 123,
+    test: bool = False,
 ):
     """
     Corrupt the CelebA dataset by applying random masks and saving it.
@@ -47,6 +48,10 @@ def corrupt_dataset(
     Path(save_path).mkdir(parents=True, exist_ok=True)
     
     dataset = load_dataset(dataset_path, keep_in_memory=True)
+
+    if test:
+        for col in dataset.column_names:
+            dataset[col] = dataset[col].select(range(1024))
 
     trainset = dataset['train']
     trainset = trainset.rename_column('image', 'x')
