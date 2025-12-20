@@ -20,72 +20,6 @@ from typing import *
 # isort: split
 from .utils import *
 
-# Smaller Config
-CONFIG_ORIGINAL = {
-    # Data
-    'corruption': 90,
-    # Architecture
-    'hid_channels': (128, 256, 384),
-    'hid_blocks': (5, 5, 5),
-    'kernel_size': (3, 3),
-    'emb_features': 256,
-    'heads': {1: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'heuristic': None,
-    'discrete': 256,
-    'maxiter': 1,
-    # Training
-    'epochs': 512, # 256,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 2e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.9999,
-}
-
-# Larger Config
-CONFIG_LARGE = {
-    # Data
-    'corruption': 75,
-    # Architecture
-    'hid_channels': (256, 384, 512), # (128, 256, 384),
-    'hid_blocks': (6, 6, 6), # (5, 5, 5),
-    'kernel_size': (3, 3),
-    'emb_features': 512, # 256,
-    'heads': {1: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'heuristic': None,
-    'discrete': 256,
-    'maxiter': 1,
-    # Training
-    'epochs': 256,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 2e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.9999,
-}
-
-CONFIG = CONFIG_ORIGINAL
-# DATASET_PATH = f'[somepath]/cifar_dir/hf/cifar-mask-{CONFIG["corruption"]}'
-RUN_NAME = 'conditional_90mask'
-# PATH = Path(f'[somepath]/cifar_dir/{RUN_NAME}')
-# PATH.mkdir(parents=True, exist_ok=True)
-
 def generate(model, dataset, rng, batch_size, **kwargs):
     def transform(batch):
         y, A = batch['y'], batch['A']
@@ -152,8 +86,9 @@ def train_helper(
     runid: int,
     lap: int,
     diffem_files_dir: Path,
-    config: dict,
+    train_config: dict,
     run_name: str,
+    test: bool = False
 ) -> None:
     print('Beginning lap', lap)
     begin_t = time.time()
@@ -164,7 +99,7 @@ def train_helper(
         resume='allow',
         name=f'cifar-diffEM_[{lap}, )' + f'_{run_name}',
         dir=diffem_files_dir/'cifar'/'checkpoints'/run_name,
-        config=config,
+        config=train_config,
     )
 
     config = run.config
@@ -182,10 +117,16 @@ def train_helper(
     np_rng = np.random.default_rng(seed)
 
     # SDE
-    sde = VESDE(**CONFIG.get('sde'))
+    sde = VESDE(**train_config.get('sde'))
 
     # Data
     dataset = load_from_disk(diffem_files_dir / 'cifar' / 'datasets' / f'cifar-mask-{config.corruption}')
+    
+    # on test mode only use the first 1024 data points
+    if test:
+        for col in dataset.column_names:
+            dataset[col] = dataset[col].select(range(1024))
+
     dataset.set_format('numpy')
 
     trainset_yA = dataset['train']
@@ -290,7 +231,7 @@ def train_helper(
     if lap > 0:
         model = previous
     else:
-        model = make_model_conditional(key=rng.split(), **CONFIG)
+        model = make_model_conditional(key=rng.split(), **train_config)
 
     model.mu_x = mu_x
 
@@ -453,8 +394,6 @@ def train_helper(
 
 
 def train(
-
-
     model: DictConfig,
     sampler: DictConfig,
     optimizer: DictConfig,
@@ -463,15 +402,7 @@ def train(
     run_name: str|None,
     corruption_name: str,
     corruption_level: float,
-    
-    # cifar_dir_path: str,
-    # maskprob: int,
-    
-    # run_name: str = datetime.now().strftime("%m/%d/%Y_%H:%M:%S"),
-    
-    # last_lap: int = -1,
-    # num_laps: int = 0,
-    # **kwargs # training hyperparameters
+    test: bool = False,
     ):
     """
     Trains DiffEM on Cifar-10 dataset with random masking corruption
@@ -551,26 +482,16 @@ def train(
     }
 
 
-
     for lap in range(start_lap, last_lap+1):
         train_helper(
             runid = runid,
             lap = lap,
-            config=config,
+            train_config=config,
             diffem_files_dir=diffem_files_dir,
             run_name=run_name,
+            test=test
         )
 
 
 if __name__ == '__main__':
     pass
-    # runid = wandb.util.generate_id()
-    # print('itnog')
-
-    # start_lap = 20
-
-    # for lap in range(start_lap, 32):
-    #     train_helper(runid, lap, 'actual_run_1')
-    #     print(f'LAP {lap} FINISHED!')
-
-

@@ -62,7 +62,7 @@ diffem_files/
 In order to train the conditional model you simply use the `train.py` script.
 
 ```bash
-python train.py experiment=cifar ruin_name=test_run diffem_files_dir=<path/to/diffem_files>\
+python train.py experiment=cifar run_name=test_run diffem_files_dir=<path/to/diffem_files>\
                 training.num_laps=20 experiment.corruption_level=90
 ```
 
