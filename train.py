@@ -28,14 +28,10 @@ def main(cfg: DictConfig) -> None:
         test=cfg.test
     )
     
-
-    # Dispatch is now EXPLICIT in code structure
-    # (you can choose this based on import or config if you want)
     if cfg.experiment.dataset_name == 'cifar':
         cifar_train_conditional(**common_kwargs)
     elif cfg.experiment.dataset_name == 'celeba':
-        pass
-        # celeba_train_conditional(**common_kwargs)
+        celeba_train_conditional(**common_kwargs)
     else:
         logging.error(f"Unsupported experiment: {cfg.experiment}. Supported experiments are 'cifar', 'celeba'.")
         return

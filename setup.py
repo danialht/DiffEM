@@ -138,7 +138,7 @@ def setup_directory(
         celeba_corrupt(
             str(save_dir),
             dataset_dir/(f'datasets/clean' + ('_test' if test else '')),
-            maskprob=maskprob,
+            maskprob=0,
             seed=seed,
             test=test
             )

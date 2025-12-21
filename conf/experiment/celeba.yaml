@@ -1,13 +1,13 @@
 dataset_name: "celeba" # don't change, used in train.py
 corruption: "mask"
-corruption_level: 75
+corruption_level: 50
 
 model:
-  hid_channels: [128, 256, 384]
-  hid_blocks: [5, 5, 5]
+  hid_channels: [128, 256, 384, 512]
+  hid_blocks: [3, 3, 3, 3]
   kernel_size: [3, 3]
   emb_features: 256
-  heads: {1: 4}
+  heads: {3: 4}
   dropout: 0.1
 
 sampler:
@@ -15,11 +15,12 @@ sampler:
   sde:
     a: 1e-3
     b: 1e2
-  maxiter: 1
+  maxiter: 3
+  discrete: 256
 
 optimizer:
   name: adam
-  lr_init: 2e-4
+  lr_init: 1e-4
   lr_end: 1e-6
   lr_warmup: 0.0
   scheduler: constant

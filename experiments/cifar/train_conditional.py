@@ -93,12 +93,14 @@ def train_helper(
     print('Beginning lap', lap)
     begin_t = time.time()
 
+    checkpoint_dir = diffem_files_dir/'cifar'/'checkpoints'/run_name
+
     run = wandb.init(
         project='priors-cifar-mask-conditional',
         id=runid,
         resume='allow',
         name=f'cifar-diffEM_[{lap}, )' + f'_{run_name}',
-        dir=diffem_files_dir/'cifar'/'checkpoints'/run_name,
+        dir=checkpoint_dir,
         config=train_config,
     )
 
@@ -138,8 +140,8 @@ def train_helper(
     # Previous
     if lap > 0:
         # raise Exception("Not Implemented")
-        previous = load_module(runpath / f'checkpoint_{lap - 1}.pkl')
-        print('Loaded previous model from' + str(runpath / f'checkpoint_{lap - 1}.pkl'))
+        previous = load_module(checkpoint_dir / f'checkpoint_{lap - 1}.pkl')
+        print('Loaded previous model from' + str(checkpoint_dir / f'checkpoint_{lap - 1}.pkl'))
     else:
         y_fit, A_fit = trainset_yA[:16384]['y'], trainset_yA[:16384]['A']
         y_fit, A_fit = jax.device_put((y_fit, A_fit), distributed)
@@ -387,7 +389,7 @@ def train_helper(
     model = static(avrg, others)
     model.train(False)
 
-    dump_module(model, runpath / f'checkpoint_{lap}.pkl')
+    dump_module(model, checkpoint_dir / f'checkpoint_{lap}.pkl')
     print('Finished Lap', lap, 'in', (time.time() - begin_t) / 60, 'minutes')
 
 
@@ -407,13 +409,8 @@ def train(
     """
     Trains DiffEM on Cifar-10 dataset with random masking corruption
     Args:
-        cifar_dir_path: Path to the cifar directory (named
-            .../diffem_files/cifar, but diffem_files might be
-            different look at README.md data pipeline setup.)
-        run_name: Name of the run (used for checkpoint directory)
-        maskprob: int in range [0, 100] probability of masking in percentage
-        last_lap: The last lap number to stop at (inclusive). If -1, uses num_laps.
-        num_laps: Number of laps to train. If 0, uses last_lap.
+        model: model configs, see /conf/
+
     """
     num_laps = training.num_laps
     last_lap = training.last_lap
@@ -489,7 +486,7 @@ def train(
             train_config=config,
             diffem_files_dir=diffem_files_dir,
             run_name=run_name,
-            test=test
+            test=test,
         )
 
 
