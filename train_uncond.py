@@ -36,8 +36,7 @@ def main(cfg: DictConfig) -> None:
     if cfg.experiment.dataset_name == 'cifar':
         cifar_train_unconditional(**common_kwargs)
     elif cfg.experiment.dataset_name == 'celeba':
-        raise ValueError("Not implemented yet")
-        # celeba_train_conditional(**common_kwargs)
+        celeba_train_unconditional(**common_kwargs)
     else:
         logging.error(f"Unsupported experiment: {cfg.experiment}. Supported experiments are 'cifar', 'celeba'.")
         return

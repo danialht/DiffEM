@@ -33,7 +33,7 @@ def train_helper(
             id=runid,
             resume='allow',
             dir=checkpoint_dir,
-            name=run_name+"_unconditional",
+            name=run_name+"checkpoint_{checkpoint_index}",
             config=train_config,
         )
 
@@ -212,11 +212,6 @@ def train(
     run_name: str,
     test: bool = False,
 ):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="\n*** %(message)s\n"
-    )
-
     config = {
         # Data
         'corruption_name': corruption_name,

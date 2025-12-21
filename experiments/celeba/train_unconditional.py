@@ -15,6 +15,7 @@ import wandb
 import re
 from .utils import *
 import jax.numpy as jnp
+from omegaconf import DictConfig
 import numpy as np
 from datasets import load_dataset, Dataset, Array3D, Features, load_from_disk
 import inox
@@ -24,46 +25,46 @@ import wandb
 
 import re
 
-CONFIG = {
-    # Data
-    # 'duplicate': 2,
-    'corruption': 75,
-    'img_shape': (64, 64, 3),
-    # Architecture
-    'hid_channels': (128, 256, 384, 512),
-    'hid_blocks': (3, 3, 3, 3),
-    'kernel_size': (3, 3),
-    'emb_features': 256,
-    'heads': {3: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'heuristic': None,
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'discrete': 64,
-    'maxiter': 3,
-    # Training
-    'epochs': 512,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 1e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.999,
-}
-config = MyDict(CONFIG)
+# CONFIG = {
+#     # Data
+#     # 'duplicate': 2,
+#     'corruption': 75,
+#     'img_shape': (64, 64, 3),
+#     # Architecture
+#     'hid_channels': (128, 256, 384, 512),
+#     'hid_blocks': (3, 3, 3, 3),
+#     'kernel_size': (3, 3),
+#     'emb_features': 256,
+#     'heads': {3: 4},
+#     'dropout': 0.1,
+#     # Sampling
+#     'sampler': 'ddpm',
+#     'heuristic': None,
+#     'sde': {'a': 1e-3, 'b': 1e2},
+#     'discrete': 64,
+#     'maxiter': 3,
+#     # Training
+#     'epochs': 512,
+#     'batch_size': 256,
+#     'scheduler': 'constant',
+#     'lr_init': 1e-4,
+#     'lr_end': 1e-6,
+#     'lr_warmup': 0.0,
+#     'optimizer': 'adam',
+#     'weight_decay': None,
+#     'clip': 1.0,
+#     'ema_decay': 0.999,
+# }
+# config = MyDict(CONFIG)
 
-TEST_MODE = False
-CHECKPOINT_TO_LOAD = Path('[some path]/celeba_dir/checkpoints_mask75/checkpoint_23.pkl')
-DATASET_PATH = f'[some path]/celeba_64_mask{config.corruption}' + ('_test' if TEST_MODE else '')
-RUN_NAME = f'mask75_checkpoint_23_unconditional'
-PATH = Path(f'[some path]/celeba_dir/unconditional-mask{config.corruption}')
+# TEST_MODE = False
+# CHECKPOINT_TO_LOAD = Path('[some path]/celeba_dir/checkpoints_mask75/checkpoint_23.pkl')
+# DATASET_PATH = f'[some path]/celeba_64_mask{config.corruption}' + ('_test' if TEST_MODE else '')
+# RUN_NAME = f'mask75_checkpoint_23_unconditional'
+# PATH = Path(f'[some path]/celeba_dir/unconditional-mask{config.corruption}')
 
 
-def generate_conditional(model, dataset, rng, batch_size, sde, **kwargs):
+def generate_conditional(model, config, dataset, rng, batch_size, sde, **kwargs):
     
     def transform(batch):
         y_cond = np.asarray(batch['y'])
@@ -94,20 +95,25 @@ def generate_conditional(model, dataset, rng, batch_size, sde, **kwargs):
         desc="Sampling"
     )
 
-def train():
+def train_helper(
+    run_name: str,
+    diffem_files_dir: Path,
+    train_config: dict,
+    checkpoint_index: int,
+    test: bool = False,
+):
     runid = wandb.util.generate_id()
+    checkpoint_dir = diffem_files_dir / 'celeba/checkpoints' / run_name
+
     run = wandb.init(
         project='celeba-unconditional',
-        name=RUN_NAME,
+        name=run_name+f'_checkpoint_{checkpoint_index}',
         id=runid,
         resume='allow',
-        dir=PATH,
-        config=CONFIG,
+        dir=checkpoint_dir,
+        config=train_config,
     )
-    runpath = PATH / f'runs/{run.name}_{run.id}'
-    runpath.mkdir(parents=True, exist_ok=True)
-    
-    (PATH / 'checkpoints').mkdir(parents=True, exist_ok=True)
+    config = run.config
 
     # Sharding
     jax.config.update('jax_threefry_partitionable', True)
@@ -117,24 +123,23 @@ def train():
     distributed = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('i'))
 
     # RNG
-    seed = hash(runpath) % 2**16
+    seed = hash(run.name) % 2**16
     rng = inox.random.PRNG(seed)
 
     # SDE
-    sde = VESDE(**CONFIG.get('sde'))
+    sde = VESDE(**train_config.get('sde'))
 
-    # Data
-    dataset = load_from_disk(DATASET_PATH)
+    # Load the corrupted dataset
+    dataset_name = f'{config.corruption_name}{config.corruption_level}' + ('_test' if test else '')
+    dataset_path = diffem_files_dir / 'celeba/datasets' / dataset_name
+    dataset = load_from_disk(dataset_path)
     dataset.set_format('numpy')
 
-    # normalize the dataset to [-2, 2] and make sure that
-    # corrupted pixels are zero in the normalized data
-    dataset = normalize_dataset(dataset, col_name='y', apply_corruption=True)
-
     # Generate data from conditional model
-    model = load_module(CHECKPOINT_TO_LOAD)
+    model = load_module(checkpoint_dir / f'checkpoint_{checkpoint_index}.pkl')
     trainset = generate_conditional(
         model=model,
+        config=config,
         dataset=dataset,
         rng=rng,
         batch_size=config.batch_size,
@@ -142,7 +147,7 @@ def train():
     )
 
     # Train unconditional model on the generated data
-    model = make_model(key=rng.split(), **CONFIG)
+    model = make_model(key=rng.split(), **train_config)
     model.train(True)
     static, params, others = model.partition(nn.Parameter)
 
@@ -245,8 +250,57 @@ def train():
     model = static(avrg, others)
     model.train(False)
 
-    dump_module(model, PATH / f'checkpoints/checkpoint_{config.epochs}_{RUN_NAME}.pkl')
+    dump_module(model, checkpoint_dir / f'checkpoint_unconditional_{checkpoint_index}.pkl')
 
 
-if __name__ == "__main__":
-    train()
+def train(
+    model: DictConfig,
+    sampler: DictConfig,
+    optimizer: DictConfig,
+    training: DictConfig,
+    diffem_files_dir: Path,
+    checkpoint_index: int,
+    corruption_name: str,
+    corruption_level: int,
+    run_name: str,
+    test: bool = True,
+):
+
+    config = {
+        # Data
+        'corruption_name': corruption_name,
+        'corruption_level': corruption_level,
+        # Architecture
+        'hid_channels': model.hid_channels,
+        'hid_blocks': model.hid_blocks,
+        'kernel_size': model.kernel_size,
+        'emb_features': model.emb_features,
+        'heads': model.heads,
+        'dropout': model.dropout,
+        # Sampling
+        'sampler': sampler.name,
+        'sde': sampler.sde,
+        'discrete': sampler.discrete,
+        'maxiter': sampler.maxiter,
+        # Training
+        'epochs': training.epochs,
+        'batch_size': training.batch_size,
+        'scheduler': optimizer.scheduler,
+        'lr_init': optimizer.lr_init,
+        'lr_end': optimizer.lr_end,
+        'lr_warmup': optimizer.lr_warmup,
+        'optimizer': optimizer.name,
+        'weight_decay': optimizer.weight_decay,
+        'clip': training.clip,
+        'ema_decay': training.ema_decay,
+    }
+
+    train_helper(
+        run_name=run_name,
+        diffem_files_dir=diffem_files_dir,
+        train_config=config,
+        checkpoint_index=checkpoint_index,
+        test=test,
+    )
+
+    pass
