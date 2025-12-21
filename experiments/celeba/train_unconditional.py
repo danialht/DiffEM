@@ -13,7 +13,7 @@ from functools import partial
 import wandb
 
 import re
-from utils import *
+from .utils import *
 import jax.numpy as jnp
 import numpy as np
 from datasets import load_dataset, Dataset, Array3D, Features, load_from_disk
@@ -23,8 +23,6 @@ from tqdm import trange, tqdm
 import wandb
 
 import re
-
-from utils import *
 
 CONFIG = {
     # Data

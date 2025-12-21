@@ -1,71 +1,19 @@
-from utils import *
+from .utils import *
 from tqdm import trange
 import wandb
 from datasets import Array3D, Features, load_from_disk
 import pickle
 from pathlib import Path
+import logging
+from omegaconf import DictConfig
 
-CONFIG = {
-    # Data
-    'corruption': 75,
-    # Architecture
-    'hid_channels': (128, 256, 384),
-    'hid_blocks': (5, 5, 5),
-    'kernel_size': (3, 3),
-    'emb_features': 256,
-    'heads': {1: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'heuristic': None,
-    'discrete': 256,
-    'maxiter': 1,
-    # Training
-    'epochs': 256,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 2e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.9999,
-}
-
-CONFIG_LONG_TRAINED = {
-    # Data
-    'corruption': 75,
-    # Architecture
-    'hid_channels': (128, 256, 384),
-    'hid_blocks': (5, 5, 5),
-    'kernel_size': (3, 3),
-    'emb_features': 256,
-    'heads': {1: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'heuristic': None,
-    'discrete': 256,
-    'maxiter': 1,
-    # Training
-    'epochs': 512,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 2e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.9999,
-}
-
-CONFIG = CONFIG_LONG_TRAINED
-
-def train(dataset_name: str, dataset_path: Path, save_path: str, pretrained_model_path: str = None):
+def train_helper(
+    run_name: str,
+    diffem_files_dir: Path,
+    train_config: DictConfig,
+    checkpoint_index: int,
+    test: bool = True
+    ):
     r"""
     Arguments:
         dataset_name            (str):  name of the dataset saved using the generate.
@@ -77,17 +25,16 @@ def train(dataset_name: str, dataset_path: Path, save_path: str, pretrained_mode
         None
     """
 
-    PATH = dataset_path
-
     runid = wandb.util.generate_id()
+    checkpoint_dir = diffem_files_dir / 'cifar/checkpoints' / run_name
 
     run = wandb.init(
             project='unconditional-cifar-mask',
             id=runid,
             resume='allow',
-            dir=dataset_path,
-            name=str(dataset_name),
-            config=CONFIG,
+            dir=checkpoint_dir,
+            name=run_name+"_unconditional",
+            config=train_config,
         )
 
     config = run.config
@@ -100,27 +47,58 @@ def train(dataset_name: str, dataset_path: Path, save_path: str, pretrained_mode
     distributed = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('i'))
 
     # SDE
-    sde = VESDE(**CONFIG.get('sde'))
+    sde = VESDE(**train_config.get('sde'))
 
     # RNG
     seed = hash('Random Hash') % 2**16
     rng = inox.random.PRNG(seed = seed)
 
-    # Loading Data
-    print('Loading dataset')
-    dataset = pickle.load(open(str(dataset_path / dataset_name), 'rb'))
-    print('Dataset Loaded')
-    
+    # Loading the corrupted Dataset
+    logging.info('Loading dataset')
+    dataset_path = diffem_files_dir / 'cifar/datasets'
+    dataset_path = dataset_path / (f'cifar-{config.corruption_name}-{config.corruption_level}' + ('_test' if test else ''))
+    dataset = load_from_disk(dataset_path)
     dataset.set_format('numpy')
 
-    trainset = dataset
+    trainset_yA = dataset['train']
+
+    conditional_model = load_module(checkpoint_dir / f'checkpoint_{checkpoint_index}.pkl')
+
+    def generate_conditional(model, dataset, rng, batch_size, **kwargs):
+        def transform(batch):
+            y_cond = batch['y']
+            x = sample_conditional(model, y_cond, rng.split(), **kwargs)
+            x = np.asarray(x)
+
+            return {'x': x}
+
+        types = {'x': Array3D(shape=(32, 32, 3), dtype='float32')}
+
+        return dataset.map(
+            transform,
+            features=Features(types),
+            remove_columns=[name for name in dataset.features.keys()],
+            keep_in_memory=True,
+            batched=True,
+            batch_size=batch_size,
+            drop_last_batch=True,
+            desc="Generating Training Set",
+        )
+
+    trainset = generate_conditional(
+            model=conditional_model,
+            dataset=trainset_yA,
+            rng=rng,
+            batch_size=config.batch_size,
+            shard=True,
+            sampler=config.sampler,
+            sde=sde,
+            steps=config.discrete,
+            maxiter=config.maxiter,
+        )
 
     # Model
-    model = None
-    if pretrained_model_path == None:
-        model = make_model(key = rng.split(), **CONFIG)
-    else:
-        model = load_module(pretrained_model_path)
+    model = make_model(key = rng.split(), **train_config)
 
     model.train(True)
 
@@ -218,99 +196,59 @@ def train(dataset_name: str, dataset_path: Path, save_path: str, pretrained_mode
     model = static(avrg, others)
     model.train(False)
 
-    # dump_module(model, runpath / f'checkpoint_{lap}.pkl')
+    save_path = checkpoint_dir / f'checkpoint_unconditional_{checkpoint_index}.pkl'
     dump_module(model, save_path)
     run.finish()
 
+def train(
+    model: DictConfig,
+    sampler: DictConfig,
+    optimizer: DictConfig,
+    training: DictConfig,
+    diffem_files_dir: Path,
+    checkpoint_index: int,
+    corruption_name: str,
+    corruption_level: int,
+    run_name: str,
+    test: bool = False,
+):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="\n*** %(message)s\n"
+    )
 
-def generate_data_conditional(checkpoint: str, path: Path, dataset_path: str, save_path: str):
-    r"""
-    Arguments:
-        checkpoint      (str):  the name of the checkpoint file, e.g. 'checkpoint_5.pkl' 
-        path            (Path): the path to the run directory (where all checkpoints are stored at) e.g. Path('/data/checkpoints/')
-        dataset_path    (str):  path to dataset e.g. '/root/hf/cifar-mask-75'
-        save_path       (str):  path to save the generated dataset e.g. '/root/generated_data/dataset.pkl'
-    Return:
-        None
-    """
+    config = {
+        # Data
+        'corruption_name': corruption_name,
+        'corruption_level': corruption_level,
+        # Architecture
+        'hid_channels': model.hid_channels,
+        'hid_blocks': model.hid_blocks,
+        'kernel_size': model.kernel_size,
+        'emb_features': model.emb_features,
+        'heads': model.heads,
+        'dropout': model.dropout,
+        # Sampling
+        'sampler': sampler.name,
+        'sde': sampler.sde,
+        'discrete': sampler.discrete,
+        'maxiter': sampler.maxiter,
+        # Training
+        'epochs': training.epochs,
+        'batch_size': training.batch_size,
+        'scheduler': optimizer.scheduler,
+        'lr_init': optimizer.lr_init,
+        'lr_end': optimizer.lr_end,
+        'lr_warmup': optimizer.lr_warmup,
+        'optimizer': optimizer.name,
+        'weight_decay': optimizer.weight_decay,
+        'clip': training.clip,
+        'ema_decay': training.ema_decay,
+    }
 
-
-    jax.config.update('jax_threefry_partitionable', True)
-
-    mesh = jax.sharding.Mesh(jax.devices(), 'i')
-    replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    distributed = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('i'))
-
-    class MyDict: # just so that we could use config.something instead of CONFIG['something']
-        def __init__(self, dict):
-            self.dict = dict
-        def __getattr__(self, key):
-            return self.dict[key]
-
-    config = MyDict(CONFIG)
-
-    # RNG
-    seed = hash(checkpoint) % 2**16
-    rng = inox.random.PRNG(seed)
-
-    # SDE
-    sde = VESDE(**CONFIG.get('sde'))
-
-    # Data
-    dataset = load_from_disk(dataset_path)
-    dataset.set_format('numpy')
-
-    trainset_yA = dataset['train']
-
-    previous = load_module(path / checkpoint)
-
-    def generate_conditional(model, dataset, rng, batch_size, **kwargs):
-        def transform(batch):
-            y_cond = batch['y']
-            x = sample_conditional(model, y_cond, rng.split(), **kwargs)
-            x = np.asarray(x)
-
-            return {'x': x}
-
-        types = {'x': Array3D(shape=(32, 32, 3), dtype='float32')}
-
-        return dataset.map(
-            transform,
-            features=Features(types),
-            remove_columns=[name for name in dataset.features.keys()],
-            keep_in_memory=True,
-            batched=True,
-            batch_size=batch_size,
-            drop_last_batch=True,
-        )
-
-    trainset = generate_conditional(
-            model=previous,
-            dataset=trainset_yA,
-            rng=rng,
-            batch_size=config.batch_size,
-            shard=True,
-            sampler=config.sampler,
-            sde=sde,
-            steps=config.discrete,
-            maxiter=config.maxiter,
-        )
-
-    dump_module(trainset, save_path)
-
-
-if __name__ == '__main__':
-    for i in range(32):
-        generate_data_conditional(
-            checkpoint = f'checkpoint_{i}.pkl',
-            dataset_path = f'[some path]/cifar_dir/hf/cifar-mask-90',
-            path =  Path('[some path]/cifar_dir/conditional_90mask'),
-            save_path = f'[some path]/cifar_dir/conditional_90mask/generated_data_checkpoint{i}.pkl'
-            )
-        
-        train(
-            dataset_name = f'generated_data_checkpoint{i}.pkl',
-            dataset_path = Path('[some path]/cifar_dir/conditional_90mask/'),
-            save_path = f'[some path]/cifar_dir/unconditional_90mask/checkpoint_{i}.pkl',
-            )
-
+    train_helper(
+        run_name=run_name,
+        diffem_files_dir=diffem_files_dir,
+        train_config=config,
+        checkpoint_index=checkpoint_index,
+    )

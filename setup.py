@@ -207,11 +207,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="\n*** %(message)s\n"
-    )
     
     # Run setup
     setup_directory(
@@ -224,4 +219,8 @@ def main():
         )
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="\n*** %(message)s\n"
+    )
     main()

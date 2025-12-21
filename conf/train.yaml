@@ -5,6 +5,7 @@ defaults:
 
 test: false
 diffem_files_dir: ???
+checkpoint_index: null # only used when in training unconditional model, the index of the conditional model to load
 
 # Remove model: null, sampler: null, and optimizer: null from here
 # They will be inherited from the dataset config automatically.

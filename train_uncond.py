@@ -2,8 +2,8 @@ import hydra
 from omegaconf import DictConfig
 from pathlib import Path
 
-from experiments.cifar.train_conditional import train as cifar_train_conditional
-from experiments.celeba.train_conditional import train as celeba_train_conditional
+from experiments.cifar.train_unconditional import train as cifar_train_unconditional
+from experiments.celeba.train_unconditional import train as celeba_train_unconditional
 
 from datetime import datetime
 
@@ -15,6 +15,10 @@ def main(cfg: DictConfig) -> None:
     diffem_files_dir = Path(cfg.diffem_files_dir).expanduser().resolve()
     diffem_files_dir.mkdir(parents=True, exist_ok=True)
 
+    if cfg.checkpoint_index is None:
+        logging.error("checkpoint_index must be specified for unconditional training.")
+        return
+
     # Common kwargs
     common_kwargs = dict(
         model=cfg.experiment.model,
@@ -22,24 +26,22 @@ def main(cfg: DictConfig) -> None:
         optimizer=cfg.experiment.optimizer,
         training=cfg.training,
         diffem_files_dir=diffem_files_dir,
+        checkpoint_index=cfg.checkpoint_index,
         corruption_name=cfg.experiment.corruption,
         corruption_level=cfg.experiment.corruption_level,
         run_name=cfg.get("run_name", datetime.now().strftime("%m/%d/%Y_%H:%M:%S")),
-        test=cfg.test
+        test=cfg.test,
     )
     
     if cfg.experiment.dataset_name == 'cifar':
-        cifar_train_conditional(**common_kwargs)
+        cifar_train_unconditional(**common_kwargs)
     elif cfg.experiment.dataset_name == 'celeba':
-        celeba_train_conditional(**common_kwargs)
+        raise ValueError("Not implemented yet")
+        # celeba_train_conditional(**common_kwargs)
     else:
         logging.error(f"Unsupported experiment: {cfg.experiment}. Supported experiments are 'cifar', 'celeba'.")
         return
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="\n*** %(message)s\n"
-    )
     main()
