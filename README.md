@@ -59,6 +59,10 @@ diffem_files/
 
 ## Training
 
+The pipeline first trains a conditional model for $K$ laps, then takes the last model and generates a dataset using that and conditioning on the corrupted dataset, finally trains an unconditional model on this new dataset.
+
+### Training Conditional Model
+
 In order to train the conditional model you simply use the `train.py` script.
 
 ```bash
@@ -70,14 +74,25 @@ In order to have a much more fine grained control over training you can use a mo
 
 ```bash
 python train.py run_name=<run name> experiment=<experiment_name e.g. cifar, cleba>\
-                diffem_files_dir=<path/to/diffem_files> \
-                training.num_laps=<num EM laps> training.epochs=<num epochs>\
-                training.batch_size=<batch size> training.clip=<clip> training.ema_decay=<ema_decay>\
-                experiment.sampler.name=<sampler name> experiment.sampler.sde.a=<a> experiment.sampler.sde.b=<b>\
-                experiment.sampler.maxiter=<maxiter> experiment.sampler.discrete=<discrete>\
-                experiment.optimizer.name=<optimizer name> experiment.optimizer.lr_init=<initial lr> experiment.optimizer.lr_end=<ending lr> experiment.optimizer.lr_warmup=<warmup lr>\
-                experiment.optimizer.scheduler: constant experiment.optimizer.weight_decay: null\
-                experiment.model.hid_channels=<hid_channels> experiment.model.hid_blocks=<hid_blocks> \
-                experiment.model.kernel_size=<kernel_size> experiment.model.emb_features=<emb_features> \
-                experiment.model.heads=<heads> experiment.model.dropout=<dropout>
+    diffem_files_dir=<path/to/diffem_files> \
+    training.num_laps=<num EM laps> training.epochs=<num epochs>\
+    training.batch_size=<batch size> training.clip=<clip> training.ema_decay=<ema_decay>\
+    experiment.sampler.name=<sampler name> experiment.sampler.sde.a=<a> experiment.sampler.sde.b=<b>\
+    experiment.sampler.maxiter=<maxiter> experiment.sampler.discrete=<discrete>\
+    experiment.optimizer.name=<optimizer name> experiment.optimizer.lr_init=<initial lr> experiment.optimizer.lr_end=<ending lr> experiment.optimizer.lr_warmup=<warmup lr>\
+    experiment.optimizer.scheduler: constant experiment.optimizer.weight_decay: null\
+    experiment.model.hid_channels=<hid_channels> experiment.model.hid_blocks=<hid_blocks> \
+    experiment.model.kernel_size=<kernel_size> experiment.model.emb_features=<emb_features> \
+    experiment.model.heads=<heads> experiment.model.dropout=<dropout>
 ```
+
+
+### Training the Unconditional Model
+
+To load `checkpoint_x.pkl` from the `checkpoints/run_name` and train a uncondtional model on it use the following and set the index to be `x`. The trained unconditional model will be dumped in the same directory with name `checkpoint_uncondtional_x.pkl`.
+
+```bash
+python train_uncond.py experiment=cifar run_name=test_run diffem_files_dir=<path/to/diffem_files>\
+    checkpoint_index=<conditional model checkpoint index>
+```
+
