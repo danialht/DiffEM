@@ -12,62 +12,23 @@ import wandb
 
 import re
 
+from omegaconf import DictConfig
+
 from .utils import *
 from jax.scipy.signal import convolve2d
 
-CONFIG = {
-    # Data
-    # 'duplicate': 2,
-    'corruption': 50,
-    'img_shape': (64, 64, 3),
-    # Architecture
-    'hid_channels': (128, 256, 384, 512),
-    'hid_blocks': (3, 3, 3, 3),
-    'kernel_size': (3, 3),
-    'emb_features': 256,
-    'heads': {3: 4},
-    'dropout': 0.1,
-    # Sampling
-    'sampler': 'ddpm',
-    'heuristic': None,
-    'sde': {'a': 1e-3, 'b': 1e2},
-    'discrete': 64,
-    'maxiter': 3,
-    # Training
-    'epochs': 64,
-    'batch_size': 256,
-    'scheduler': 'constant',
-    'lr_init': 1e-4,
-    'lr_end': 1e-6,
-    'lr_warmup': 0.0,
-    'optimizer': 'adam',
-    'weight_decay': None,
-    'clip': 1.0,
-    'ema_decay': 0.999,
-}
-config = MyDict(CONFIG)
-
-TEST_MODE = False
-RUN_NAME = "mask50"
-
-CHECKPOINT_PATH = Path('[some path]/celeba_dir/checkpoints_test') if TEST_MODE \
-else Path('[some path]/celeba_dir/checkpoints_' + RUN_NAME)
-
-DATASET_PATH = Path(f'[some path]/celeba_64_mask{config.corruption}_test/') if TEST_MODE \
-else Path(f'[some path]/celeba_64_mask{config.corruption}/')
-
-DATASET = None
+IMG_SHAPE = (64, 64, 3)
 
 def corrupt(rng, corruption, dataset: Dataset):
 
     def transform(row):
         x = np.asarray(row['x'])
-        A = rng.bernoulli(p = 1 - corruption / 100, shape = config.img_shape[:2] + (1, ))
+        A = rng.binomial(n=1, p=1 - corruption / 100, size=IMG_SHAPE[:2] + (1,))
         y = np.array(A * x)
         return {'y': y}
     
     types = {
-        'y': Array3D(shape=config.img_shape, dtype='float32'),
+        'y': Array3D(shape=IMG_SHAPE, dtype='float32'),
     }
 
     return dataset.map(
@@ -78,7 +39,7 @@ def corrupt(rng, corruption, dataset: Dataset):
         num_proc=1
     )
 
-def generate_conditional(model, dataset, rng, batch_size, sde, **kwargs):
+def generate_conditional(model, config, dataset, rng, batch_size, sde, **kwargs):
     
     def transform(batch):
         y_cond = np.asarray(batch['y'])
@@ -128,47 +89,26 @@ def generate(model, dataset, rng, batch_size, **kwargs):
         drop_last_batch=True,
     )
 
-@jax.vmap
-def blur_initialization_vfun(x, A, kernel):
-    """
-    input is an image in range [-2, 2] and a mask A
-    """
-    x += 2
-    W = (convolve2d(A.squeeze(), kernel, mode='same', boundary='fill')**-1)[..., None]
-    W = jnp.nan_to_num(W, nan=0.0, posinf=0.0, neginf=0.0)
-    x_blurry = jnp.stack(
-        [convolve2d(x[:,:,i], kernel, mode='same', boundary='fill') for i in range(3)],
-        axis=-1
-    ) * W
-    x = A * x + (1 - A) * x_blurry
-    x -= 2
-    return x
-
-def blur_initialization(row: dict, kernel):
-    """
-    input is an image in range [-2, 2] and a mask A
-    """
-    x, A = row['x'], row['A']
-    x += 2
-    W = (convolve2d(A.squeeze(), kernel, mode='same', boundary='fill')**-1)[..., None]
-    W = jnp.nan_to_num(W, nan=0.0, posinf=0.0, neginf=0.0)
-    x_blurry = np.stack(
-        [convolve2d(x[:,:,i], kernel, mode='same', boundary='fill') for i in range(3)],
-        axis=-1
-    ) * W
-    x = A * x + (1 - A) * x_blurry
-    x -= 2
-    return {'x': x}
-
-def train(lap, runid):
+def train_helper(
+    runid: int,
+    lap: int,
+    diffem_files_dir: Path,
+    train_config: dict,
+    run_name: str,
+    test: bool = False,
+    ):
+    
+    checkpoint_dir = diffem_files_dir / 'celeba/checkpoints' / run_name
     run = wandb.init(
             project='priors-celeba-mask-conditional',
             id=runid,
             resume='allow',
-            dir=CHECKPOINT_PATH,
-            config=CONFIG,
-            name=f'celeba_itnog_lap[{start_lap},)' + ('_test' if TEST_MODE else '_' + RUN_NAME)
+            dir=checkpoint_dir,
+            config=train_config,
+            name=f'{run_name}_lap{lap}',
         )
+
+    config = run.config
 
     # Sharding
     jax.config.update('jax_threefry_partitionable', True)
@@ -178,14 +118,17 @@ def train(lap, runid):
     distributed = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('i'))
 
     # RNG
-    seed = hash(('celebA', lap)) % (1<<16)
+    seed = hash((run_name, lap)) % (1<<16)
+    np_rng = np.random.default_rng(seed=seed)
     rng = inox.random.PRNG(seed)
 
     # SDE
-    sde = VESDE(**CONFIG.get('sde'))
+    sde = VESDE(**train_config.get('sde'))
 
-    dataset = DATASET
-    breakpoint()
+    dataset_path=diffem_files_dir / 'celeba/datasets'
+    dataset_path = dataset_path / (f'{config.corruption_name}{config.corruption}' + ('_test' if test else ''))
+    dataset = load_from_disk(dataset_path, keep_in_memory=True)
+    dataset.set_format('numpy')
 
     if lap == 0:
         # MMPS initialization
@@ -222,15 +165,15 @@ def train(lap, runid):
             maxiter=config.maxiter,
         )
 
-        model = make_model_conditional(key = rng.split(), **CONFIG)
+        model = make_model_conditional(key = rng.split(), **train_config)
         wandb.log({'mmps_result': wandb.Image(to_pil(trainset['x'][0]))})
     else:
-        model = load_module(CHECKPOINT_PATH / f'checkpoint_{lap - 1}.pkl')
+        model = load_module(checkpoint_dir / f'checkpoint_{lap - 1}.pkl')
         print(f'Loaded checkpoint_{lap - 1}.pkl')
-        trainset = generate_conditional(model, dataset.remove_columns('A'), rng, config.batch_size, sde)
+        trainset = generate_conditional(model, config, dataset.remove_columns('A'), rng, config.batch_size, sde)
 
 
-    trainset_corrupted = corrupt(rng, config.corruption, trainset)
+    trainset_corrupted = corrupt(np_rng, config.corruption, trainset)
     trainset_corrupted.set_format(type='numpy', columns=['y'])
 
     evalset = np.array(dataset[:16]['y'])
@@ -300,7 +243,6 @@ def train(lap, runid):
     # num_epochs = config.epochs if lap > 0 else config.epochs // 4
 
     for epoch in (bar := trange(config.epochs, ncols=88)):
-        print(f'epoch {epoch}')
         loader = trainset.shuffle(seed=seed + lap * config.epochs + epoch).iter(
             batch_size=config.batch_size, drop_last_batch=True
         )
@@ -356,40 +298,97 @@ def train(lap, runid):
                 'loss': loss_train,
             })
 
-    dump_module(model, CHECKPOINT_PATH / f'checkpoint_{lap}.pkl')
+    dump_module(model, checkpoint_dir / f'checkpoint_{lap}.pkl')
     print(f'Saved checkpoint_{lap}.pkl')
 
-def init_dataset():
-    """
-    Maps a dataset to [-2, 2] and sets the 
-    dead pixels to 0 (not -2).
-    """
-    global DATASET
-    if TEST_MODE:
-        dataset = load_from_disk(f'[some path]/celeba_64_mask{config.corruption}_test/', keep_in_memory=True)
-    else:
-        dataset = load_from_disk(f'[some path]/celeba_64_mask{config.corruption}/', keep_in_memory=True)
-    dataset.set_format('numpy')
-    def normalize(row):
-        return {'y': row['y'] * 4 / 256 - 2, 'A': row['A']}
-    DATASET = dataset.map(normalize, desc="Normalizing dataset") # TODO: remove the 1<<10
 
-if __name__ == "__main__":
-    CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
-    init_dataset()
-    # Automatically finding the start_lap by looping over the files in directory
-    checkpoint_name_regex = r'checkpoint_(\d+).pkl'
-    max_checkpoint = -1
-    for child in Path(CHECKPOINT_PATH).iterdir():
-        if not child.is_file():
-            continue
-        if not re.fullmatch(checkpoint_name_regex, child.name):
-            continue
-        max_checkpoint = max(max_checkpoint, int(re.fullmatch(checkpoint_name_regex, child.name).group(1)))
-        
-    start_lap = max_checkpoint + 1
+def train(
+    model: DictConfig,
+    sampler: DictConfig,
+    optimizer: DictConfig,
+    training: DictConfig,
+    diffem_files_dir: Path,
+    run_name: str|None,
+    corruption_name: str,
+    corruption_level: float,
+    test: bool = False,
+):
 
+    num_laps = training.num_laps
+    last_lap = training.last_lap
+
+    if(run_name is None):
+        run_name = datetime.now().strftime("%m_%d_%Y_%H:%M:%S.%f")[:-3]
+    
+    if(num_laps <= 0 and last_lap <= -1):
+        raise ValueError("Either laps (number of laps to train) \
+        or last_lap (the last lap-number to stop at) must be specified.")
+
+    if(num_laps > 0 and last_lap > -1):
+        raise ValueError("Only one of laps (number of laps to train) \
+        or last_lap (the last lap-number to stop at) can be specified.")
+
+
+    if not diffem_files_dir.exists():
+        raise ValueError(f"The specified diffem_files_dir does not exist: {diffem_files_dir.resolve()}")
+
+    
+    checkpoint_dir = diffem_files_dir / 'celeba' / 'checkpoints' / run_name
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    start_lap = 0
+
+    # Find the maximum checkpoint index and set teh start_lap
+    for file in checkpoint_dir.iterdir():
+        if file.name.startswith('checkpoint_') and file.suffix == '.pkl':
+            lap_num = int(file.name[len('checkpoint_'):-len('.pkl')])
+            if lap_num >= start_lap:
+                start_lap = lap_num + 1
+    
+    last_lap = start_lap + num_laps - 1 if num_laps > 0 else last_lap
+    
+    
     runid = wandb.util.generate_id()
+    
+    
+    config = {
+        # Data
+        'corruption_name': corruption_name,
+        'corruption': corruption_level,
+        # Architecture
+        'hid_channels': model.hid_channels,
+        'hid_blocks': model.hid_blocks,
+        'kernel_size': model.kernel_size,
+        'emb_features': model.emb_features,
+        'heads': model.heads,
+        'dropout': model.dropout,
+        # Sampling
+        'sampler': sampler.name,
+        'sde': sampler.sde,
+        'discrete': sampler.discrete,
+        'maxiter': sampler.maxiter,
+        # Training
+        'epochs': training.epochs,
+        'batch_size': training.batch_size,
+        'scheduler': optimizer.scheduler,
+        'lr_init': optimizer.lr_init,
+        'lr_end': optimizer.lr_end,
+        'lr_warmup': optimizer.lr_warmup,
+        'optimizer': optimizer.name,
+        'weight_decay': optimizer.weight_decay,
+        'clip': training.clip,
+        'ema_decay': training.ema_decay,
+    }
 
-    for lap in range(start_lap, 64):
-        train(lap, runid)
+    for lap in range(start_lap, last_lap+1):
+        train_helper(
+            runid = runid,
+            lap = lap,
+            train_config=config,
+            diffem_files_dir=diffem_files_dir,
+            run_name=run_name,
+            test=test,
+        )
+
+
+if __name__ == '__main__':
+    pass
