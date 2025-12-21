@@ -447,7 +447,6 @@ def train(
     
     runid = wandb.util.generate_id()
     
-    
     config = {
         # Data
         'corruption_name': corruption_name,
@@ -462,7 +461,6 @@ def train(
         # Sampling
         'sampler': sampler.name,
         'sde': sampler.sde,
-        'heuristic': None,
         'discrete': sampler.discrete,
         'maxiter': sampler.maxiter,
         # Training
@@ -477,7 +475,6 @@ def train(
         'clip': training.clip,
         'ema_decay': training.ema_decay,
     }
-
 
     for lap in range(start_lap, last_lap+1):
         train_helper(
