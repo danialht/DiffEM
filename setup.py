@@ -26,7 +26,6 @@ def transform_img(img: Image, width, height):
     img = img.resize((width, height), Image.Resampling.LANCZOS)
     return img
 
-
 def celeba_transform(args):
     counter, img_file, save_dir = args
     img = Image.open(img_file)
@@ -156,7 +155,6 @@ def setup_directory(
         log.info("No setup avialable yet for manifold dataset.")
         return
 
-
 def main():
     """Main entry point for the setup script."""
     parser = argparse.ArgumentParser(
@@ -176,7 +174,7 @@ def main():
         "dataset",
         type=str,
         help="Name of the dataset to be used,\
-        could be one of ['manifold', 'cifar', 'celeba']"
+        could be one of ['cifar', 'celeba']"
     )
 
     parser.add_argument(

@@ -96,3 +96,9 @@ python train_uncond.py experiment=cifar run_name=test_run diffem_files_dir=<path
     checkpoint_index=<conditional model checkpoint index>
 ```
 
+
+### Evaluating
+
+```bash
+python /data/vision/torralba/scratch/danialht/DiffEM/evaluate.py metrics=[fdinf,fid,prdc] experiment=cifar  checkpoint_index=0 diffem_files_dir=/data/vision/torralba/scratch/danialht/diffem_files run_name=test_run
+```

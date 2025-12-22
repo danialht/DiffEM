@@ -1,0 +1,10 @@
+defaults:
+  - _self_
+  - experiment: cifar
+
+diffem_files_dir: null
+run_name: null
+checkpoint_index: null
+metrics: [is, fddinov2, fid]
+test: false
+output: null
