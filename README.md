@@ -108,10 +108,13 @@ You can check the `conf` directory to see what hyperparameters you can tune.
 
 ### Evaluating
 
-For evaluation you use `evaluate.py` to generate a dataset of png, then we recommend using `dgm-eval` for measuring different metrics. Here is an example usage.
+For evaluation you use `evaluate.py` to generate a dataset of png, then we recommend using [dgm-eval](https://github.com/layer6ai-labs/dgm-eval) for measuring different metrics. Here is an example usage.
 
 ```bash
-python ./evaluate.py experiment=cifar checkpoint_index=20 diffem_files_dir=<path/to/diffem_files_dir> run_name=<run_name> conditional=true
+python ./evaluate.py experiment=cifar checkpoint_index=20 \
+    diffem_files_dir=<path/to/diffem_files_dir> run_name=<run_name> conditional=true
 
-python -m dgm_eval diffem_files_dir/cifar/dataset_eval/clean diffem_files_dir/cifar/dataset_eval/run_name/conditional_checkpoint_20 --metrics fd --model dinov2 --nsample 50000
+python -m dgm_eval diffem_files_dir/cifar/dataset_eval/clean \
+    diffem_files_dir/cifar/dataset_eval/run_name/conditional_checkpoint_20 \
+    --metrics fd --model dinov2 --nsample 50000
 ```
