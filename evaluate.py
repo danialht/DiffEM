@@ -34,7 +34,6 @@ def main(cfg: DictConfig):
         cifar_evaluate(
             diffem_files_dir=diffem_files_dir,
             experiment=cfg.experiment,
-            metrics=cfg.metrics,
             run_name=cfg.run_name,
             checkpoint_index=cfg.checkpoint_index,
             corruption_level=cfg.experiment.corruption_level,
@@ -43,7 +42,16 @@ def main(cfg: DictConfig):
             conditional=cfg.conditional,
         )
     elif cfg.experiment.dataset_name == 'celeba':
-        pass
+        celeba_evaluate(
+            diffem_files_dir=diffem_files_dir,
+            experiment=cfg.experiment,
+            run_name=cfg.run_name,
+            checkpoint_index=cfg.checkpoint_index,
+            corruption_level=cfg.experiment.corruption_level,
+            corruption_name=cfg.experiment.corruption,
+            test=cfg.test,
+            conditional=cfg.conditional,
+        )
     else:
         raise ValueError(f"Unsupported experiment: {cfg.experiment}.")
     

@@ -79,14 +79,10 @@ python train.py run_name=<run name> experiment=<experiment_name e.g. cifar, cleb
     training.num_laps=<num EM laps> training.epochs=<num epochs> \
     training.batch_size=<batch size> training.clip=<clip> training.ema_decay=<ema_decay> \
     experiment.sampler.name=<sampler name> experiment.sampler.sde.a=<a> experiment.sampler.sde.b=<b> \
-    experiment.sampler.maxiter=<maxiter> experiment.sampler.discrete=<discrete> \
-    experiment.optimizer.name=<optimizer name> experiment.optimizer.lr_init=<initial lr> experiment.optimizer.lr_end=<ending lr> experiment.optimizer.lr_warmup=<warmup lr> \
-    experiment.optimizer.scheduler: constant experiment.optimizer.weight_decay: null \
-    experiment.model.hid_channels=<hid_channels> experiment.model.hid_blocks=<hid_blocks> \
-    experiment.model.kernel_size=<kernel_size> experiment.model.emb_features=<emb_features> \
-    experiment.model.heads=<heads> experiment.model.dropout=<dropout>
+    ...
 ```
 
+You can check the `conf` directory to see what hyperparameters you can change.
 
 ### Training the Unconditional Model
 
@@ -104,19 +100,18 @@ python train_uncond.py experiment=cifar run_name=test_run diffem_files_dir=<path
     experiment.corruption_level=<corruption level> experiment.corruption=<corruption name> \
     training.num_laps=<num EM laps> training.epochs=<num epochs> \
     training.batch_size=<batch size> training.clip=<clip> training.ema_decay=<ema_decay> \
-    experiment.sampler.name=<sampler name> experiment.sampler.sde.a=<a> experiment.sampler.sde.b=<b> \
-    experiment.sampler.maxiter=<maxiter> experiment.sampler.discrete=<discrete> \
-    experiment.optimizer.name=<optimizer name> experiment.optimizer.lr_init=<initial lr> experiment.optimizer.lr_end=<ending lr> experiment.optimizer.lr_warmup=<warmup lr> \
-    experiment.optimizer.scheduler: constant experiment.optimizer.weight_decay: null \
-    experiment.model.hid_channels=<hid_channels> experiment.model.hid_blocks=<hid_blocks> \
-    experiment.model.kernel_size=<kernel_size> experiment.model.emb_features=<emb_features> \
-    experiment.model.heads=<heads> experiment.model.dropout=<dropout>
+    ...
 ```
 
+You can check the `conf` directory to see what hyperparameters you can tune.
 
 
 ### Evaluating
 
+For evaluation you use `evaluate.py` to generate a dataset of png, then we recommend using `dgm-eval` for measuring different metrics. Here is an example usage.
+
 ```bash
-python /data/vision/torralba/scratch/danialht/DiffEM/evaluate.py metrics=[fdinf,fid,prdc] experiment=cifar  checkpoint_index=0 diffem_files_dir=/data/vision/torralba/scratch/danialht/diffem_files run_name=test_run
+python ./evaluate.py experiment=cifar checkpoint_index=20 diffem_files_dir=<path/to/diffem_files_dir> run_name=<run_name> conditional=true
+
+python -m dgm_eval diffem_files_dir/cifar/dataset_eval/clean diffem_files_dir/cifar/dataset_eval/run_name/conditional_checkpoint_20 --metrics fd --model dinov2 --nsample 50000
 ```
