@@ -33,7 +33,7 @@ def train_helper(
             id=runid,
             resume='allow',
             dir=checkpoint_dir,
-            name=run_name+"checkpoint_{checkpoint_index}",
+            name=run_name+f"_checkpoint_{checkpoint_index}",
             config=train_config,
         )
 
@@ -246,4 +246,5 @@ def train(
         diffem_files_dir=diffem_files_dir,
         train_config=config,
         checkpoint_index=checkpoint_index,
+        test=test,
     )

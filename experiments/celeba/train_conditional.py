@@ -13,6 +13,7 @@ import wandb
 import re
 
 from omegaconf import DictConfig
+from datetime import datetime
 
 from .utils import *
 from jax.scipy.signal import convolve2d
@@ -36,7 +37,8 @@ def corrupt(rng, corruption, dataset: Dataset):
         remove_columns=dataset.column_names,
         features=Features(types),
         keep_in_memory=True,
-        num_proc=1
+        num_proc=1,
+        desc=f"corruption the dataset with {corruption=}"
     )
 
 def generate_conditional(model, config, dataset, rng, batch_size, sde, **kwargs):

@@ -5,6 +5,7 @@ defaults:
 diffem_files_dir: null
 run_name: null
 checkpoint_index: null
-metrics: [is, fddinov2, fid]
+conditional: true
+metrics: [is, fddinov2, fid, prdc, fdinf]
 test: false
 output: null

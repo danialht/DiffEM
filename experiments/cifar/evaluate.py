@@ -4,6 +4,7 @@ from datasets import load_from_disk, Array3D, Features, load_dataset
 
 from .utils import *
 
+from tqdm import tqdm
 from scipy.special import softmax
 from scipy.stats import entropy
 from sklearn.neighbors import NearestNeighbors
@@ -135,7 +136,6 @@ def load_dinov2_model(model_name="dinov2_vitb14", device=None):
     model.to(device)
     return model
 
-
 def preprocess_dinov2(images_uint8: np.ndarray, device=None) -> torch.Tensor:
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -155,7 +155,6 @@ def preprocess_dinov2(images_uint8: np.ndarray, device=None) -> torch.Tensor:
         pil = torchvision.transforms.functional.to_pil_image(img)
         out.append(tfm(pil))
     return torch.stack(out, dim=0).to(device)
-
 
 def extract_inception_features(images: np.ndarray, batch_size=64):
     """
@@ -240,7 +239,7 @@ def compute_prdc(real_feats, gen_feats, k=5):
     precision = np.mean(gen_to_real < real_to_real)
     recall    = np.mean(real_to_gen < gen_to_gen)
     density   = np.mean(real_to_gen < real_to_real[:, None])
-    coverage  = np.mean(np.min(real_to_gen, axis=1) < real_to_real)
+    coverage  = np.mean(np.min(real_to_gen, axis=0) < real_to_real)
 
     return {
         'precision': float(precision),
@@ -272,8 +271,21 @@ def generate_dataset(model, dataset, rng, batch_size, conditional=True, **kwargs
         return {'x': x}
 
     def transform_unconditional(batch):
-        y_cond = batch['y']
-        x = sample(model, y_cond, rng.split(), **kwargs)
+        y = batch['y']
+        # x = sample(model, y_cond, rng.split(), **kwargs)
+
+        x = sample_any(
+            model=model,
+            shape=flatten(y).shape,
+            shard=True,
+            A=None,
+            y=None,
+            cov_y=1e-3**2,
+            key=rng.split(),
+        )
+
+        x = unflatten(x, 32, 32)
+
         x = np.asarray(x)
 
         return {'x': x}
@@ -301,13 +313,28 @@ def evaluate(
     checkpoint_index: int,
     corruption_level: int,
     corruption_name: str,
-    # output: str,
     test: bool = False,
+    conditional: bool = True,
 ) -> None:
+    logging.info("metrics to compute: " + ", ".join(metrics))
     # load model
-    checkpoint_path = diffem_files_dir / f'{experiment.dataset_name}/checkpoints/{run_name}' / ('checkpoint_'+str(checkpoint_index)+'.pkl')
+    checkpoint_path = diffem_files_dir / f'{experiment.dataset_name}/checkpoints/{run_name}'
+    if conditional:
+        checkpoint_path = checkpoint_path / ('checkpoint_'+str(checkpoint_index)+'.pkl')
+    else:
+        checkpoint_path = checkpoint_path / ('checkpoint_unconditional_'+str(checkpoint_index)+'.pkl')
     model = load_module(checkpoint_path)
+    logging.info(f"Loaded model from {checkpoint_path}")
 
+    # check if clean dataset for eval exists
+    clean_dataset_path = diffem_files_dir / experiment.dataset_name / 'datasets' / 'clean'
+    clean_dataset_eval_path = diffem_files_dir / experiment.dataset_name / 'datasets_eval' / 'clean'
+    if not clean_dataset_eval_path.exists():
+        clean_dataset_eval_path.mkdir(parents=True, exist_ok=True)
+        dataset = load_dataset('cifar10', cache_dir=clean_dataset_path)
+        for i, img in enumerate(dataset['train']['img']):
+            img.save(clean_dataset_eval_path / f'{i}.png')
+    
     # load corrupted dataset
     corrupted_dataset_name = f"cifar-{corruption_name}-{corruption_level}" + ('_test' if test else '')
     corrupted_dataset_path = diffem_files_dir / experiment.dataset_name / 'datasets' / corrupted_dataset_name
@@ -346,54 +373,81 @@ def evaluate(
             sde=sde,
             steps=experiment.sampler.discrete,
             maxiter=experiment.sampler.maxiter,
-            conditional=isinstance(model, ConditionalDenoiser)
+            conditional=conditional
         )
 
     gen_imgs = to_uint8(np.stack(generated_dataset['x']))
-    real_imgs = to_uint8(np.stack(original_dataset['x']))
+    # real_imgs = to_uint8(np.stack(original_dataset['x']))
+    real_imgs = np.stack([np.array(img) for img in original_dataset['x']]).astype(np.uint8)
 
-    results = {}
+    dataset_eval_dir = diffem_files_dir / experiment.dataset_name / 'datasets_eval'
+    dataset_eval_dir = dataset_eval_dir / run_name / (("conditional_" if conditional else "unconditional_") + f"checkpoint_{checkpoint_index}" + ("_test" if test else ""))
 
-    if 'fid' in metrics or 'fdinf' in metrics or 'is' in metrics:
-        logging.info("extracting inception features")
-        real_feats, _ = extract_inception_features(real_imgs)
-        gen_feats, gen_logits = extract_inception_features(gen_imgs)
+    dataset_eval_dir.mkdir(parents=True, exist_ok=True)
 
-    if 'fid' in metrics:
-        logging.info("computing FID score")
-        results['fid'] = compute_fid_from_features(real_feats, gen_feats)
+    # save all the gen images as png in the eval dir
+    for i, img in tqdm(enumerate(gen_imgs)):
+        Image.fromarray(img).save(dataset_eval_dir / f'{i}.png')
+        # torchvision.utils.save_image(
+        #     torch.from_numpy(img).permute(2,0,1),
+        #     dataset_eval_dir / f'{i:05d}.png'
+        # )
+    
+    logging.info(f"Saved generated images to {dataset_eval_dir}")
 
-    if 'is' in metrics:
-        logging.info("computing inception score")
-        is_mean, is_std = compute_inception_score(gen_logits)
-        results['is_mean'] = is_mean
-        results['is_std'] = is_std
+    # results = {}
 
-    if 'fdinf' in metrics:
-        logging.info("computing fd infinity score")
-        results['fdinf'] = compute_fd_infinity(real_feats, gen_feats)
+    # if 'fid' in metrics or 'fdinf' in metrics or 'is' in metrics:
+    #     logging.info("extracting inception features")
+    #     real_feats, _ = extract_inception_features(real_imgs)
+    #     gen_feats, gen_logits = extract_inception_features(gen_imgs)
 
-    del gen_logits
-    del real_feats
-    del gen_feats
+    # if 'fid' in metrics:
+    #     logging.info("computing FID score")
+    #     results['fid'] = compute_fid_from_features(real_feats, gen_feats)
 
-    real_dino = None
-    gen_dino = None
-    if 'prdc' in metrics:
-        logging.info("extracting dinov2 features")
-        real_dino = extract_dinov2_features(real_imgs)
-        gen_dino  = extract_dinov2_features(gen_imgs)
+    # if 'is' in metrics:
+    #     logging.info("computing inception score")
+    #     is_mean, is_std = compute_inception_score(gen_logits)
+    #     results['is_mean'] = is_mean
+    #     results['is_std'] = is_std
 
-        logging.info("computing prdc")
-        results.update(compute_prdc(real_dino, gen_dino))
-        # results.update(compute_prdc(real_feats, gen_feats))
+    # if 'fdinf' in metrics:
+    #     logging.info("computing fd infinity score")
+    #     results['fdinf'] = compute_fd_infinity(real_feats, gen_feats)
 
-    if 'fddinov2' in metrics:
-        logging.info("computing fd dinov2")
-        if real_dino is None: real_dino = extract_dinov2_features(real_imgs)
-        if gen_dino is None: gen_dino  = extract_dinov2_features(gen_imgs)
-        results['fddinov2'] = compute_fid_from_features(real_dino, gen_dino)
+    # if 'fid' in metrics or 'fdinf' in metrics or 'is' in metrics:
+    #     del gen_logits
+    #     del real_feats
+    #     del gen_feats
 
-    with open(output, 'a') as f:
-        f.write(str(results) + "\n")
+    # real_dino = None
+    # gen_dino = None
+    # if 'prdc' in metrics:
+    #     logging.info("extracting dinov2 features")
+    #     real_dino = extract_dinov2_features(real_imgs)
+    #     gen_dino  = extract_dinov2_features(gen_imgs)
+
+    #     logging.info("computing prdc")
+    #     results.update(compute_prdc(real_dino[:len(gen_dino)], gen_dino))
+    #     # results.update(compute_prdc(real_feats, gen_feats))
+
+    # if 'fddinov2' in metrics:
+    #     logging.info("computing fd dinov2")
+    #     if real_dino is None: real_dino = extract_dinov2_features(real_imgs)
+    #     if gen_dino is None: gen_dino  = extract_dinov2_features(gen_imgs)
+    #     results['fddinov2'] = compute_fid_from_features(real_dino, gen_dino)
+
+    # output = diffem_files_dir / experiment.dataset_name / 'checkpoints' / run_name
+    # if conditional:
+    #     output = output / f'eval_conditional_{checkpoint_index}{("_test" if test else "")}.txt'
+    # else:
+    #     output = output / f'eval_unconditional_{checkpoint_index}{("_test" if test else "")}.txt'
+
+    # output.parent.mkdir(parents=True, exist_ok=True)
+
+    # with open(output, 'a') as f:
+    #     f.write(str(results) + "\n")
+
+    # logging.info(f"Saved results to {output}: {results}")
     

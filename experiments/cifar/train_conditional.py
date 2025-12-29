@@ -237,14 +237,16 @@ def train_helper(
 
     model.mu_x = mu_x
 
-    if config.heuristic == 'zeros':
-        model.cov_x = jnp.zeros_like(mu_x)
-    elif config.heuristic == 'ones':
-        model.cov_x = jnp.ones_like(mu_x)
-    elif config.heuristic == 'cov_t':
-        model.cov_x = jnp.ones_like(mu_x) * 1e6
-    elif config.heuristic == 'cov_x':
-        model.cov_x = cov_x
+    # This is by default not set in this code.
+    if config.get('heuristic', None) is not None:
+        if config.heuristic == 'zeros':
+            model.cov_x = jnp.zeros_like(mu_x)
+        elif config.heuristic == 'ones':
+            model.cov_x = jnp.ones_like(mu_x)
+        elif config.heuristic == 'cov_t':
+            model.cov_x = jnp.ones_like(mu_x) * 1e6
+        elif config.heuristic == 'cov_x':
+            model.cov_x = cov_x
 
     model.train(True)
 

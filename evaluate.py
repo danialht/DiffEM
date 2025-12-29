@@ -40,6 +40,7 @@ def main(cfg: DictConfig):
             corruption_level=cfg.experiment.corruption_level,
             corruption_name=cfg.experiment.corruption,
             test=cfg.test,
+            conditional=cfg.conditional,
         )
     elif cfg.experiment.dataset_name == 'celeba':
         pass

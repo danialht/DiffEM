@@ -12,6 +12,9 @@ import logging
 @hydra.main(version_base=None, config_path="conf", config_name="train")
 def main(cfg: DictConfig) -> None:
     # Root directory
+    if cfg.diffem_files_dir == "" or cfg.diffem_files_dir is None:
+        logging.error("Please provide a valid path for 'diffem_files_dir' in the configuration.")
+        return
     diffem_files_dir = Path(cfg.diffem_files_dir).expanduser().resolve()
     diffem_files_dir.mkdir(parents=True, exist_ok=True)
 
