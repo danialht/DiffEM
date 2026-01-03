@@ -341,7 +341,10 @@ def train(
 
     # Find the maximum checkpoint index and set teh start_lap
     for file in checkpoint_dir.iterdir():
-        if file.name.startswith('checkpoint_') and file.suffix == '.pkl':
+        if (file.name.startswith('checkpoint_')
+            and file.suffix == '.pkl'
+            and (not file.name.startswith('checkpoint_unconditional'))
+            ):
             lap_num = int(file.name[len('checkpoint_'):-len('.pkl')])
             if lap_num >= start_lap:
                 start_lap = lap_num + 1
